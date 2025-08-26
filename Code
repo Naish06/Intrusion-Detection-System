@@ -1,0 +1,43 @@
+!pip install scapy pandas
+from scapy.all import sniff, IP, TCP, UDP
+from collections import defaultdict
+import time
+BLACKLISTED_IPS = {"192.168.1.100", "10.0.0.50"}
+
+# Track connections per source
+connection_tracker = defaultdict(list)
+
+# IDS thresholds
+PORT_SCAN_THRESHOLD = 10     # if one IP connects to 10+ ports
+REQUEST_RATE_THRESHOLD = 20  # if one IP sends 20+ packets in short time
+TIME_WINDOW = 10             # seconds
+
+def detect_intrusion(packet):
+    """Analyze packet and detect suspicious activity"""
+    if packet.haslayer(IP):
+        src_ip = packet[IP].src
+        dst_ip = packet[IP].dst
+
+        # 1. Blacklisted IP detection
+        if src_ip in BLACKLISTED_IPS:
+            print(f"[ALERT] Blacklisted IP detected: {src_ip} -> {dst_ip}")
+            return
+
+        # 2. Track ports for port scan detection
+        if packet.haslayer(TCP) or packet.haslayer(UDP):
+            dport = packet[TCP].dport if packet.haslayer(TCP) else packet[UDP].dport
+            connection_tracker[src_ip].append((time.time(), dport))
+
+            # Clean old entries
+            connection_tracker[src_ip] = [(t, p) for t, p in connection_tracker[src_ip] if time.time() - t <= TIME_WINDOW]
+
+            # Unique ports count
+            unique_ports = {p for t, p in connection_tracker[src_ip]}
+            if len(unique_ports) >= PORT_SCAN_THRESHOLD:
+                print(f"[ALERT] Possible Port Scan from {src_ip} (ports: {unique_ports})")
+
+            # Request rate check
+            if len(connection_tracker[src_ip]) >= REQUEST_RATE_THRESHOLD:
+                print(f"[ALERT] High request rate from {src_ip} ({len(connection_tracker[src_ip])} packets in {TIME_WINDOW}s)")
+print("[IDS STARTED] Monitoring network traffic...")
+sniff(prn=detect_intrusion, store=0, count=50)
